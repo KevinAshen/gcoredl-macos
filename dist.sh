@@ -1,18 +1,25 @@
 #!/bin/bash
 
-set -eux
+set -euo pipefail
 
-cd $(dirname $0)
+cd "$(dirname "$0")"
 
-rm -rf dist
 mkdir -p dist
 
+VERSION="${VERSION:-dev}"
+
 _build() {
-    GOOS=$1 GOARCH=$2 CGO_ENABLED=0 go build -o dist/gcoredl-$1-$2
+    local os="$1"
+    local arch="$2"
+    local suffix=""
+    if [[ "$os" == "windows" ]]; then
+        suffix=".exe"
+    fi
+    echo "building ${os}/${arch}"
+    GOOS="$os" GOARCH="$arch" CGO_ENABLED=1 go build \
+        -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+        -o "dist/gcoredl-${os}-${arch}${suffix}" .
 }
 
-_build windows amd64
-_build linux amd64
-_build linux arm64
 _build darwin amd64
 _build darwin arm64

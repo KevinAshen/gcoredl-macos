@@ -1,47 +1,155 @@
 # gcoredl
 
-用于批量下载用户已经购买的机核有声书 MP3 文件，并添加正确的 ID3 信息和封面
+macOS 命令行工具：批量保存当前账号已购买、且机核服务端允许播放/下载的有声书音频，整理为带封面和完整 ID3 标签的 MP3。
 
-## 安装方法
+本分支基于原始 [gcoredl](https://github.com/yankeguo-deprecated/gcoredl) 修改，适配机核当前网页的 API 和认证方式。它不会绕过 DRM、购买权限或服务端限制。
 
-### 下载编译好的二进制文件
+## 功能
 
-访问 https://github.com/go-guoyk/gcoredl/releases 下载编译好的二进制文件，请依照当前操作系统选择正确的文件
+- 输入专辑 ID，按 `published-audiobooks` 的原始顺序获取完整章节
+- 支持当前 `audio` 和 `protected_audio` 媒体类型
+- `protected_audio` 使用网页当前的官方授权流程：请求短时有效的获准播放地址
+- 失败自动重试；每次重试都会重新请求短时授权地址
+- 使用 `.part` 临时文件，完成后原子改名；已存在的 MP3 自动跳过
+- 输出下载进度和最终成功/跳过/失败汇总
+- 文件名自动清理，使用 `001 - 章节名.mp3` 格式
+- 写入标题、专辑、作者、曲目号/总曲目数、流派和封面 ID3 标签
+- 对官方授权返回的无 DRM、非 MP3 音频，可调用 ffmpeg 转换为 MP3
+- 登录令牌由 macOS 钥匙串保存，不出现在命令历史和 gcoredl 日志中
 
-(Windows 二进制文件可能需要手动添加 `.exe` 扩展名)
+## 系统要求
 
-### 自己编译
+- macOS 13 或更高版本；发布脚本同时支持 Intel (`amd64`) 和 Apple Silicon (`arm64`)
+- 自行编译需要 Go 1.22 或更高版本
+- 只有源音频不是 MP3 时才需要 ffmpeg：
 
-1. 安装 Golang
-2. 执行 `git clone https://github.com/go-guoyk/gcoredl.git` 克隆代码
-3. 执行 `go build` 进行编译
+  ```bash
+  brew install ffmpeg
+  ```
 
-## 使用方法
+机核当前有声书响应中的 `audio` 通常已经是 MP3，因此多数下载不需要 ffmpeg。
 
-1. 在电脑网页端打开机核网，并登录自己的账户
-2. 点开计划下载的有声书，比如《克苏鲁神话III》，此时可以在浏览器链接栏看到该有声书的编号为 `64`
-3. 打开浏览器的开发者工具，找到 `Cookie` 中，`auth_token` 的值，比如 `xxxxxxxxx`
+## 编译
 
-   **注意，这个值代表着你的用户身份，任何情况下请勿告诉其他人**
-   
-4. 执行该命令行工具
+克隆并在仓库目录执行：
 
-   ```shell
-   # Linux 和 macOS
-   ./gcoredl -album 64 -auth xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   
-   # Windows
-   .\gcoredl.exe -album 64 -auth xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```bash
+git clone https://github.com/KevinAshen/gcoredl-macos.git
+cd gcoredl-macos
+go test ./...
+go build -trimpath -o gcoredl .
+```
+
+构建 macOS Intel 和 Apple Silicon 发行文件：
+
+```bash
+VERSION=2.1.0 ./dist.sh
+```
+
+输出位于：
+
+- `dist/gcoredl-darwin-amd64`（Intel Mac）
+- `dist/gcoredl-darwin-arm64`（Apple Silicon）
+
+## 登录
+
+只有下载 `protected_audio` 时才需要登录。登录过程完全在你的 Mac 上完成，令牌不需要发送给任何人或 AI。
+
+1. 使用 Chrome 登录 [机核网](https://www.gcores.com/)。
+2. 打开 Chrome 开发者工具。
+3. 进入 **Console**，执行下面这行。它只会把当前页面的 `appToken` 解码后复制到本机剪贴板，不会在控制台显示令牌：
+
+   ```javascript
+   copy(decodeURIComponent(document.cookie.split("; ").find(v => v.startsWith("appToken=")).slice("appToken=".length)))
    ```
 
-最后，你会得到一个文件夹 `output-64`，里面有完整有声书的 `MP3` 文件，并且每个 `MP3` 文件都包含正确的 ID3 标签，直接放入播放器，即可获得完整的专辑，标题，封面展示。
+4. 执行：
 
-## 免责声明
+   ```bash
+   ./gcoredl login
+   ```
 
-1. 本方法基于未公开的 API，未来官方 API 变动可能导致该方法失效
+5. 在两个隐藏提示中各粘贴一次 `appToken` 并回车。两次内容必须一致。
 
-2. 本方法无法获取到用户未购买的有声书，如果你想听某个有声书，请乖乖掏钱
+`login` 由 gcoredl 自身读取完整的隐藏输入，再通过 macOS 原生 Security.framework 写入钥匙串，并立即回读校验长度和内容。成功信息会显示字符数；当前网页令牌通常为 199 字符。令牌不会作为 gcoredl 参数传递，不会写进 shell 历史，也不会被 HTTP 调试日志打印。macOS 可能显示钥匙串访问确认，这是正常行为。
 
-## Credits
+2.0.x 版曾通过 `/usr/bin/security -w` 接收令牌；该输入方式会在部分 macOS 版本上把 199 字符令牌静默截成 128 字符，导致浏览器授权正常而 CLI 始终返回 401。2.1.0 起不再使用该输入方式，并改用新的钥匙串项目，旧的截断值不会被误用。
 
-Guo Y.K., MIT License
+可以在不下载音频的情况下验证当前账号是否获准访问某张专辑的首个受保护章节：
+
+```bash
+./gcoredl auth-check -album 222
+```
+
+工具会自动执行与机核网页一致的 Cookie 百分号解码，但不会显示令牌或返回的短时授权 URL。
+
+退出并移除凭证：
+
+```bash
+./gcoredl logout
+```
+
+## 使用
+
+先查看专辑元数据和章节顺序，不下载：
+
+```bash
+./gcoredl inspect -album 64
+```
+
+下载到默认目录 `output-64`：
+
+```bash
+./gcoredl download -album 64
+```
+
+指定目录、重试次数或 ffmpeg 路径：
+
+```bash
+./gcoredl download \
+  -album 64 \
+  -output "$HOME/Music/有声书/克苏鲁神话III" \
+  -retries 5 \
+  -ffmpeg /usr/local/bin/ffmpeg
+```
+
+兼容原项目的参数形式，但不再接受不安全的 `-auth` 参数：
+
+```bash
+./gcoredl -album 64
+```
+
+下载中断后直接重跑同一命令即可。已经存在的最终 `.mp3` 文件会跳过，未完成的 `.part` 文件会在重试时替换。
+
+## 当前 API 兼容说明
+
+截至 2026-10-28，公开响应和网页前端显示：
+
+- 专辑：`GET /gapi/v1/albums/{id}?include=published-audiobooks,published-audiobooks.media`
+- 节目回退查询：`GET /gapi/v1/radios/{id}?include=media`
+- 免费音频：`https://alioss.gcores.com/uploads/audio/{audio}`
+- 受保护音频授权：`GET /gapi/v1/medias/protected/radios/{id}?format=json`
+- 当前登录头：`Authorization: Token token=<appToken>`
+
+旧项目直接携带 `auth_token` Cookie 访问受保护地址、并跟随重定向；当前接口对这种直接访问返回 403。网页现在先请求 JSON 授权结果，再播放其中的短时 URL，本分支遵循同一流程。
+
+## 权限和限制
+
+- 工具只会使用机核服务端为当前账号返回的授权地址。
+- 401/403 会明确报错，不会尝试伪造权限、绕过 DRM 或猜测资源地址。
+- 未购买、已下架、平台不允许导出、令牌过期或存在 DRM 的内容不会被强行下载/转换。
+- 机核 API 不是公开稳定 API；平台未来调整接口时，工具可能需要再次更新。
+- 请只备份本人合法购买且平台允许访问的内容，并遵守机核条款和版权规定。
+
+## 测试
+
+```bash
+go test -race ./...
+go vet ./...
+```
+
+测试覆盖章节顺序、缺失 `included` 时的节目接口回退、当前授权头和 `format=json`、403 错误脱敏、重试、原子保存、已存在跳过、文件名清理、ID3 标签和 ffmpeg 调用。
+
+## License
+
+MIT。原作者 Guo Y.K.，本分支保留原项目许可证。
