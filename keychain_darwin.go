@@ -6,71 +6,128 @@ package main
 #cgo LDFLAGS: -framework Security -framework CoreFoundation
 #include <Security/Security.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
+
+static CFMutableDictionaryRef gcoredl_keychain_query(
+    const void *service, UInt32 serviceLen,
+    const void *account, UInt32 accountLen) {
+    CFStringRef serviceString = CFStringCreateWithBytes(
+        kCFAllocatorDefault, service, serviceLen, kCFStringEncodingUTF8, 0);
+    CFStringRef accountString = CFStringCreateWithBytes(
+        kCFAllocatorDefault, account, accountLen, kCFStringEncodingUTF8, 0);
+    if (serviceString == NULL || accountString == NULL) {
+        if (serviceString != NULL) CFRelease(serviceString);
+        if (accountString != NULL) CFRelease(accountString);
+        return NULL;
+    }
+
+    CFMutableDictionaryRef query = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks);
+    if (query != NULL) {
+        CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+        CFDictionarySetValue(query, kSecAttrService, serviceString);
+        CFDictionarySetValue(query, kSecAttrAccount, accountString);
+    }
+    CFRelease(serviceString);
+    CFRelease(accountString);
+    return query;
+}
 
 static OSStatus gcoredl_keychain_set(
     const void *service, UInt32 serviceLen,
     const void *account, UInt32 accountLen,
     const void *password, UInt32 passwordLen) {
-    SecKeychainItemRef item = NULL;
-    OSStatus status = SecKeychainFindGenericPassword(
-        NULL, serviceLen, service, accountLen, account,
-        NULL, NULL, &item);
-    if (status == errSecSuccess) {
-        status = SecKeychainItemModifyAttributesAndData(item, NULL, passwordLen, password);
-        CFRelease(item);
-        return status;
+    CFMutableDictionaryRef query = gcoredl_keychain_query(
+        service, serviceLen, account, accountLen);
+    CFDataRef passwordData = CFDataCreate(
+        kCFAllocatorDefault, password, passwordLen);
+    if (query == NULL || passwordData == NULL) {
+        if (query != NULL) CFRelease(query);
+        if (passwordData != NULL) CFRelease(passwordData);
+        return errSecAllocate;
     }
-    if (item != NULL) {
-        CFRelease(item);
+
+    CFMutableDictionaryRef updates = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0,
+        &kCFTypeDictionaryKeyCallBacks,
+        &kCFTypeDictionaryValueCallBacks);
+    if (updates == NULL) {
+        CFRelease(passwordData);
+        CFRelease(query);
+        return errSecAllocate;
     }
-    if (status != errSecItemNotFound) {
-        return status;
+    CFDictionarySetValue(updates, kSecValueData, passwordData);
+
+    OSStatus status = SecItemUpdate(query, updates);
+    if (status == errSecItemNotFound) {
+        CFDictionarySetValue(query, kSecValueData, passwordData);
+        status = SecItemAdd(query, NULL);
     }
-    return SecKeychainAddGenericPassword(
-        NULL, serviceLen, service, accountLen, account,
-        passwordLen, password, NULL);
+
+    CFRelease(updates);
+    CFRelease(passwordData);
+    CFRelease(query);
+    return status;
 }
 
 static OSStatus gcoredl_keychain_get(
     const void *service, UInt32 serviceLen,
     const void *account, UInt32 accountLen,
     void **outPassword, UInt32 *outPasswordLen) {
-    void *passwordData = NULL;
-    UInt32 passwordLen = 0;
-    OSStatus status = SecKeychainFindGenericPassword(
-        NULL, serviceLen, service, accountLen, account,
-        &passwordLen, &passwordData, NULL);
+    *outPassword = NULL;
+    *outPasswordLen = 0;
+    CFMutableDictionaryRef query = gcoredl_keychain_query(
+        service, serviceLen, account, accountLen);
+    if (query == NULL) {
+        return errSecAllocate;
+    }
+    CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
+    CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
+
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching(query, &result);
+    CFRelease(query);
     if (status != errSecSuccess) {
         return status;
     }
-    void *copy = malloc(passwordLen);
+    if (result == NULL || CFGetTypeID(result) != CFDataGetTypeID()) {
+        if (result != NULL) CFRelease(result);
+        return errSecDecode;
+    }
+
+    CFDataRef passwordData = (CFDataRef)result;
+    CFIndex passwordLen = CFDataGetLength(passwordData);
+    if (passwordLen < 0 || (uint64_t)passwordLen > UINT32_MAX) {
+        CFRelease(passwordData);
+        return errSecAllocate;
+    }
+    void *copy = malloc((size_t)passwordLen);
     if (copy == NULL && passwordLen > 0) {
-        SecKeychainItemFreeContent(NULL, passwordData);
+        CFRelease(passwordData);
         return errSecAllocate;
     }
     if (passwordLen > 0) {
-        memcpy(copy, passwordData, passwordLen);
+        CFDataGetBytes(passwordData, CFRangeMake(0, passwordLen), copy);
     }
-    SecKeychainItemFreeContent(NULL, passwordData);
+    CFRelease(passwordData);
     *outPassword = copy;
-    *outPasswordLen = passwordLen;
+    *outPasswordLen = (UInt32)passwordLen;
     return errSecSuccess;
 }
 
 static OSStatus gcoredl_keychain_delete(
     const void *service, UInt32 serviceLen,
     const void *account, UInt32 accountLen) {
-    SecKeychainItemRef item = NULL;
-    OSStatus status = SecKeychainFindGenericPassword(
-        NULL, serviceLen, service, accountLen, account,
-        NULL, NULL, &item);
-    if (status != errSecSuccess) {
-        return status;
+    CFMutableDictionaryRef query = gcoredl_keychain_query(
+        service, serviceLen, account, accountLen);
+    if (query == NULL) {
+        return errSecAllocate;
     }
-    status = SecKeychainItemDelete(item);
-    CFRelease(item);
+    OSStatus status = SecItemDelete(query);
+    CFRelease(query);
     return status;
 }
 */

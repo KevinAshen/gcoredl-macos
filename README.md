@@ -59,7 +59,7 @@ go build -trimpath -o gcoredl .
 构建 macOS Intel 和 Apple Silicon 发行文件：
 
 ```bash
-VERSION=2.1.0 ./dist.sh
+VERSION=2.1.1 ./dist.sh
 ```
 
 输出位于：
