@@ -29,6 +29,22 @@ macOS 命令行工具：批量保存当前账号已购买、且机核服务端�
 
 机核当前有声书响应中的 `audio` 通常已经是 MP3，因此多数下载不需要 ffmpeg。
 
+## 下载
+
+从 [Releases](https://github.com/KevinAshen/gcoredl-macos/releases/latest) 下载与你的 Mac 对应的文件：
+
+- Intel：`gcoredl-darwin-amd64`
+- Apple Silicon（M1/M2/M3/M4）：`gcoredl-darwin-arm64`
+
+下载后赋予执行权限并查看版本：
+
+```bash
+chmod +x ./gcoredl-darwin-arm64
+./gcoredl-darwin-arm64 version
+```
+
+发布文件会同时提供 `SHA256SUMS`。当前二进制未使用 Apple Developer ID 签名；如果 macOS 阻止运行，可选择按照下一节从源码自行编译。
+
 ## 编译
 
 克隆并在仓库目录执行：
